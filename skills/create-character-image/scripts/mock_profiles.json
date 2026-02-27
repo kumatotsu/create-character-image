@@ -1,0 +1,173 @@
+{
+  "character_page": {
+    "id": "char-page-001",
+    "properties": {
+      "character_id": {
+        "rich_text": [
+          {
+            "plain_text": "A-ayaka"
+          }
+        ]
+      },
+      "age": {
+        "number": 27
+      }
+    }
+  },
+  "face_page": {
+    "id": "face-page-001",
+    "properties": {
+      "bangs": {
+        "rich_text": [
+          {
+            "plain_text": "Soft side-swept bangs"
+          }
+        ]
+      },
+      "eyebrows": {
+        "rich_text": [
+          {
+            "plain_text": "Natural medium-thick eyebrows"
+          }
+        ]
+      },
+      "eyes": {
+        "rich_text": [
+          {
+            "plain_text": "Almond-shaped brown eyes"
+          }
+        ]
+      },
+      "nose": {
+        "rich_text": [
+          {
+            "plain_text": "Small straight nose"
+          }
+        ]
+      },
+      "mouth": {
+        "rich_text": [
+          {
+            "plain_text": "Soft smile with natural lip color"
+          }
+        ]
+      },
+      "jawline": {
+        "select": {
+          "name": "Oval"
+        }
+      },
+      "hair_style": {
+        "select": {
+          "name": "Medium layered"
+        }
+      },
+      "hair_color": {
+        "select": {
+          "name": "Dark brown"
+        }
+      },
+      "skin_tone": {
+        "select": {
+          "name": "Light neutral"
+        }
+      },
+      "golden_ratio": {
+        "rich_text": [
+          {
+            "plain_text": "Close to balanced facial thirds"
+          }
+        ]
+      }
+    }
+  },
+  "body_page": {
+    "id": "body-page-001",
+    "properties": {
+      "height_cm": {
+        "number": 164
+      },
+      "height_tolerance": {
+        "number": 2
+      },
+      "body_type": {
+        "select": {
+          "name": "Slim"
+        }
+      },
+      "bust_size": {
+        "select": {
+          "name": "Medium"
+        }
+      },
+      "proportions_notes": {
+        "rich_text": [
+          {
+            "plain_text": "Balanced shoulder and hip width"
+          }
+        ]
+      },
+      "default_age_range": {
+        "select": {
+          "name": "20s"
+        }
+      },
+      "negative_constraints": {
+        "rich_text": [
+          {
+            "plain_text": "Avoid overemphasized chest framing."
+          }
+        ]
+      }
+    }
+  },
+  "outfit_page": {
+    "id": "outfit-page-001",
+    "properties": {
+      "style_theme": {
+        "select": {
+          "name": "Urban casual"
+        }
+      },
+      "garments": {
+        "multi_select": [
+          {
+            "name": "Knit top"
+          },
+          {
+            "name": "Long skirt"
+          }
+        ]
+      },
+      "color_palette": {
+        "multi_select": [
+          {
+            "name": "Beige"
+          },
+          {
+            "name": "Ivory"
+          }
+        ]
+      },
+      "accessories": {
+        "multi_select": [
+          {
+            "name": "Small tote bag"
+          }
+        ]
+      },
+      "modesty_level": {
+        "select": {
+          "name": "High"
+        }
+      },
+      "negative_constraints": {
+        "rich_text": [
+          {
+            "plain_text": "Avoid see-through fabrics."
+          }
+        ]
+      }
+    }
+  }
+}

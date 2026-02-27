@@ -1,0 +1,7 @@
+interface:
+  display_name: "Notion Character Image"
+  short_description: "Notion人物DBから画像生成指示と画像出力を実行"
+  default_prompt: "$carete-character-image を使って、character_id と用途から Notion参照→英語プロンプト生成→画像生成まで実行してください。"
+
+policy:
+  allow_implicit_invocation: true

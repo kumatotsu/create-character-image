@@ -1,0 +1,521 @@
+# 2025/09/01 版 DB参照強制
+openapi: 3.1.1
+info:
+  title: Notion API
+  description: API for interacting with Notion resources such as pages and databases.
+  version: 1.0.0
+servers:
+  - url: https://api.notion.com/v1
+    description: Main API server
+paths:
+  /pages/{page_id}:
+    get:
+      operationId: getPage
+      summary: Retrieve a page by its ID.
+      parameters:
+        - name: page_id
+          in: path
+          required: true
+          description: The ID of the page to retrieve.
+          schema:
+            type: string
+        - name: Notion-Version
+          in: header
+          required: true
+          description: Notion API version
+          schema:
+            type: string
+            default: "2022-06-28"
+      responses:
+        "200":
+          description: A JSON object representing the page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Page"
+    patch:
+      operationId: updatePage
+      summary: Update a page by its ID.
+      parameters:
+        - name: page_id
+          in: path
+          required: true
+          description: The ID of the page to update.
+          schema:
+            type: string
+        - name: Notion-Version
+          in: header
+          required: true
+          description: Notion API version
+          schema:
+            type: string
+            default: "2022-06-28"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PageUpdate"
+      responses:
+        "200":
+          description: The updated page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Page"
+  /pages:
+    post:
+      operationId: createPage
+      summary: Create a new page.
+      description: Creates a new page that is a child of an existing page or database.
+      parameters:
+        - name: Notion-Version
+          in: header
+          required: true
+          description: Notion API version
+          schema:
+            type: string
+            default: "2022-06-28"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PageCreate"
+      responses:
+        "200":
+          description: A JSON object representing the newly created page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Page"
+  /databases/{database_id}:
+    get:
+      operationId: getDatabase
+      summary: Retrieve a database by its ID.
+      parameters:
+        - name: database_id
+          in: path
+          required: true
+          description: The ID of the database to retrieve.
+          schema:
+            type: string
+        - name: Notion-Version
+          in: header
+          required: true
+          description: Notion API version
+          schema:
+            type: string
+            default: "2022-06-28"
+      responses:
+        "200":
+          description: A JSON object representing the database.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Database"
+  /databases/{database_id}/query:
+    post:
+      operationId: queryDatabase
+      summary: Query a database.
+      parameters:
+        - name: database_id
+          in: path
+          required: true
+          description: The ID of the database to query.
+          schema:
+            type: string
+        - name: Notion-Version
+          in: header
+          required: true
+          description: Notion API version
+          schema:
+            type: string
+            default: "2022-06-28"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DatabaseQuery"
+            examples:
+              byCharacterIdEquals:
+                summary: character_id 完全一致
+                value:
+                  filter:
+                    property: character_id
+                    rich_text:
+                      equals: "A-あやか"
+                  sorts:
+                    - property: updated_at
+                      direction: descending
+                    - timestamp: last_edited_time
+                      direction: descending
+                  page_size: 1
+              byRelationContains:
+                summary: relation.contains でCHAR_PAGE_IDを参照
+                value:
+                  filter:
+                    property: character
+                    relation:
+                      contains: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  page_size: 1
+      responses:
+        "200":
+          description: The query results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResultList"
+
+components:
+  schemas:
+    # ===== 共通プリミティブ（Notion Pageのプロパティ値形） =====
+    RichTextContent:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [text]
+        text:
+          type: object
+          properties:
+            content:
+              type: string
+            link:
+              type: object
+        annotations:
+          type: object
+        plain_text:
+          type: string
+      required: [type, text, plain_text]
+
+    RichText:
+      description: Notionのrich_text配列（日本語テキスト想定）
+      type: object
+      properties:
+        rich_text:
+          type: array
+          items:
+            $ref: "#/components/schemas/RichTextContent"
+      required: [rich_text]
+
+    TitleProperty:
+      description: Notionのtitleプロパティ
+      type: object
+      properties:
+        title:
+          type: array
+          items:
+            $ref: "#/components/schemas/RichTextContent"
+      required: [title]
+
+    SelectOption:
+      type: object
+      properties:
+        name:
+          type: string
+        id:
+          type: string
+      required: [name]
+
+    SelectProperty:
+      description: Notionのselectプロパティ
+      type: object
+      properties:
+        select:
+          $ref: "#/components/schemas/SelectOption"
+      required: [select]
+
+    MultiSelectProperty:
+      description: Notionのmulti_selectプロパティ
+      type: object
+      properties:
+        multi_select:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+            required: [name]
+      required: [multi_select]
+
+    DateObject:
+      type: object
+      properties:
+        start:
+          type: string
+          format: date-time
+        end:
+          type: string
+          format: date-time
+      required: [start]
+
+    DateProperty:
+      description: Notionのdateプロパティ（ISO8601）
+      type: object
+      properties:
+        date:
+          $ref: "#/components/schemas/DateObject"
+      required: [date]
+
+    NumberProperty:
+      description: Notionのnumberプロパティ
+      type: object
+      properties:
+        number:
+          type: number
+      required: [number]
+
+    StatusProperty:
+      description: Notionのstatusプロパティ
+      type: object
+      properties:
+        status:
+          $ref: "#/components/schemas/SelectOption"
+      required: [status]
+
+    RelationItem:
+      type: object
+      properties:
+        id:
+          type: string
+          description: "関連先ページID"
+      required: [id]
+
+    RelationProperty:
+      description: Notionのrelationプロパティ（ページID配列）
+      type: object
+      properties:
+        relation:
+          type: array
+          items:
+            $ref: "#/components/schemas/RelationItem"
+      required: [relation]
+
+    # ===== Characters（英字プロパティ名）=====
+    CharacterProperties:
+      type: object
+      description: Characters DBのページproperties。英字プロパティ名・説明は日本語。
+      properties:
+        character_name:
+          $ref: "#/components/schemas/TitleProperty"
+        character_id:
+          $ref: "#/components/schemas/RichText"
+        age:
+          $ref: "#/components/schemas/NumberProperty"
+        group:
+          $ref: "#/components/schemas/SelectProperty"
+        tone_tags:
+          $ref: "#/components/schemas/MultiSelectProperty"
+        scene_fit:
+          $ref: "#/components/schemas/MultiSelectProperty"
+        status:
+          $ref: "#/components/schemas/StatusProperty"
+        version:
+          $ref: "#/components/schemas/RichText"
+        updated_at:
+          $ref: "#/components/schemas/DateProperty"
+        updated_by:
+          $ref: "#/components/schemas/RichText"
+        default_face:
+          $ref: "#/components/schemas/RelationProperty"
+        default_body:
+          $ref: "#/components/schemas/RelationProperty"
+        default_outfit:
+          $ref: "#/components/schemas/RelationProperty"
+
+    # ===== Face Profiles（英字プロパティ名）=====
+    FaceProfileProperties:
+      type: object
+      description: Face Profiles DBのページproperties。英字プロパティ名・説明は日本語。
+      properties:
+        face_name:
+          $ref: "#/components/schemas/TitleProperty"
+        character:
+          $ref: "#/components/schemas/RelationProperty"
+        hair_style:
+          $ref: "#/components/schemas/SelectProperty"
+        hair_color:
+          $ref: "#/components/schemas/SelectProperty"
+        bangs:
+          $ref: "#/components/schemas/RichText"
+        eyebrows:
+          $ref: "#/components/schemas/RichText"
+        eyes:
+          $ref: "#/components/schemas/RichText"
+        nose:
+          $ref: "#/components/schemas/RichText"
+        mouth:
+          $ref: "#/components/schemas/RichText"
+        jawline:
+          $ref: "#/components/schemas/SelectProperty"
+        skin_tone:
+          oneOf:
+            - $ref: "#/components/schemas/SelectProperty"
+            - $ref: "#/components/schemas/RichText"
+        golden_ratio:
+          $ref: "#/components/schemas/RichText"
+        version:
+          $ref: "#/components/schemas/RichText"
+        updated_at:
+          $ref: "#/components/schemas/DateProperty"
+        updated_by:
+          $ref: "#/components/schemas/RichText"
+        notes:
+          $ref: "#/components/schemas/RichText"
+
+    # ===== Body Profiles（英字プロパティ名）=====
+    BodyProfileProperties:
+      type: object
+      description: Body Profiles DBのページproperties。英字プロパティ名・説明は日本語。
+      properties:
+        body_name:
+          $ref: "#/components/schemas/TitleProperty"
+        character:
+          $ref: "#/components/schemas/RelationProperty"
+        height_cm:
+          $ref: "#/components/schemas/NumberProperty"
+        height_tolerance:
+          $ref: "#/components/schemas/NumberProperty"
+        body_type:
+          $ref: "#/components/schemas/SelectProperty"
+        bust_size:
+          $ref: "#/components/schemas/SelectProperty"
+        proportions_notes:
+          $ref: "#/components/schemas/RichText"
+        default_age_range:
+          $ref: "#/components/schemas/SelectProperty"
+        negative_constraints:
+          $ref: "#/components/schemas/RichText"
+        version:
+          $ref: "#/components/schemas/RichText"
+        updated_at:
+          $ref: "#/components/schemas/DateProperty"
+        updated_by:
+          $ref: "#/components/schemas/RichText"
+
+    # ===== Outfit Profiles（英字プロパティ名）=====
+    OutfitProfileProperties:
+      type: object
+      description: Outfit Profiles DBのページproperties。英字プロパティ名・説明は日本語。
+      properties:
+        outfit_name:
+          $ref: "#/components/schemas/TitleProperty"
+        character:
+          $ref: "#/components/schemas/RelationProperty"
+        style_theme:
+          $ref: "#/components/schemas/SelectProperty"
+        garments:
+          $ref: "#/components/schemas/MultiSelectProperty"
+        color_palette:
+          $ref: "#/components/schemas/MultiSelectProperty"
+        modesty_level:
+          $ref: "#/components/schemas/SelectProperty"
+        accessories:
+          $ref: "#/components/schemas/MultiSelectProperty"
+        negative_constraints:
+          $ref: "#/components/schemas/RichText"
+        version:
+          $ref: "#/components/schemas/RichText"
+        updated_at:
+          $ref: "#/components/schemas/DateProperty"
+        updated_by:
+          $ref: "#/components/schemas/RichText"
+
+    # ===== Page関連 =====
+    Page:
+      type: object
+      required: [object, id, properties]
+      properties:
+        object:
+          type: string
+          enum: [page]
+        id:
+          type: string
+        properties:
+          type: object
+          description: "ページのproperties"
+
+    PageUpdate:
+      type: object
+      required: [properties]
+      properties:
+        properties:
+          type: object
+          description: "更新するproperties"
+
+    PageCreate:
+      type: object
+      required: [parent, properties]
+      properties:
+        parent:
+          type: object
+          required: [database_id]
+          properties:
+            database_id:
+              type: string
+        properties:
+          type: object
+          description: "作成するproperties"
+        children:
+          type: array
+          items:
+            type: object
+        icon:
+          type: object
+          properties:
+            emoji:
+              type: string
+        cover:
+          type: object
+          properties:
+            external:
+              type: object
+              properties:
+                url:
+                  type: string
+                  format: uri
+
+    # ===== Database関連 =====
+    Database:
+      type: object
+      required: [object, id, properties]
+      properties:
+        object:
+          type: string
+          enum: [database]
+        id:
+          type: string
+        properties:
+          type: object
+        title:
+          type: array
+          items:
+            type: object
+
+    QueryResultList:
+      type: object
+      required: [object, results]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        next_cursor:
+          type: string
+        has_more:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Page"
+
+    DatabaseQuery:
+      type: object
+      properties:
+        filter:
+          type: object
+
+security:
+  - BearerAuth: []
