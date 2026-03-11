@@ -48,16 +48,60 @@ class NotionImagePipelineTests(unittest.TestCase):
             negative=extra["negative"],
         )
 
-        self.assertIn("Create a photorealistic professional photograph", prompt)
+        self.assertIn("Generate an image with the following requirements:", prompt)
+        for section in pipeline.CORE_PROMPT_FRAMEWORK_SECTIONS:
+            self.assertIn(f"{section}:", prompt)
+        for section in pipeline.SUPPORTING_DIRECTIVE_SECTIONS:
+            self.assertIn(f"{section}:", prompt)
         self.assertNotIn("# ", prompt)
         self.assertNotIn("##", prompt)
         self.assertNotIn("**", prompt)
         pipeline.validate_english_only_fields({"Natural prompt": prompt})
 
+    def test_generation_instructions_include_framework_sections(self):
+        req = pipeline.load_request_json(MOCK_REQUEST_PATH)
+        bundle = pipeline.load_mock_bundle(MOCK_PROFILES_PATH)
+        tone_name = pipeline.DEFAULT_TONE_BY_USE_CASE[req["use_case"]]
+        generation_instructions, extra = pipeline.compose_generation_instructions(req, bundle, tone_name)
+
+        for section in pipeline.CORE_PROMPT_FRAMEWORK_SECTIONS:
+            self.assertIn(f"## {section}", generation_instructions)
+        for section in pipeline.SUPPORTING_DIRECTIVE_SECTIONS:
+            self.assertIn(f"## {section}", generation_instructions)
+        result = pipeline.validate_prompt_assembly(
+            generation_instructions=generation_instructions,
+            natural_prompt=pipeline.build_natural_prompt(
+                req=req,
+                bundle=bundle,
+                tone_name=tone_name,
+                preset=pipeline.choose_preset(req["use_case"]),
+                resolution=extra["resolution"],
+                negative=extra["negative"],
+            ),
+            negative=extra["negative"],
+        )
+        self.assertEqual(result["status"], "passed")
+
     def test_validate_english_only_fields_rejects_japanese(self):
         with redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 pipeline.validate_english_only_fields({"Natural prompt": "これは日本語です"})
+
+    def test_validate_prompt_assembly_requires_editing_scope(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                pipeline.validate_prompt_assembly(
+                    generation_instructions="\n".join(
+                        [f"## {section}\ncontent" for section in pipeline.CORE_PROMPT_FRAMEWORK_SECTIONS]
+                        + [f"## {section}\ncontent" for section in pipeline.SUPPORTING_DIRECTIVE_SECTIONS]
+                    ),
+                    natural_prompt="\n".join(
+                        ["Generate an image with the following requirements:"]
+                        + [f"{section}: content" for section in pipeline.CORE_PROMPT_FRAMEWORK_SECTIONS]
+                        + [f"{section}: content" for section in pipeline.SUPPORTING_DIRECTIVE_SECTIONS]
+                    ),
+                    negative={"forbidden_words": [], "style_exclusions": [], "body_constraints": "", "outfit_constraints": ""},
+                )
 
     def test_main_defaults_to_awaiting_confirmation(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -75,6 +119,9 @@ class NotionImagePipelineTests(unittest.TestCase):
             meta = json.loads((Path(tmp_dir) / "image_meta.json").read_text(encoding="utf-8"))
             self.assertEqual(meta["image_status"], "awaiting_confirmation")
             self.assertIsNone(meta["file_path"])
+            self.assertIn("double_check", meta)
+            self.assertEqual(meta["double_check"]["prompt_assembly"]["status"], "passed")
+            self.assertEqual(meta["double_check"]["output_package"]["status"], "passed")
             self.assertTrue((Path(tmp_dir) / "generation_instructions.md").exists())
             self.assertTrue((Path(tmp_dir) / "natural_prompt.txt").exists())
 

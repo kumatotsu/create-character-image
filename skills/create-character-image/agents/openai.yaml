@@ -1,7 +1,7 @@
 interface:
   display_name: "Notion Character Image"
   short_description: "Notion人物DBから画像生成指示と画像出力を実行"
-  default_prompt: "$carete-character-image を使って、character_id と用途から Notion参照→英語のGeneration Instructionsと自然言語プロンプトを生成し、画像生成前に確認を取ってください。確認後のみ `--confirm-image-generation` で画像生成まで進めてください。"
+  default_prompt: "$carete-character-image を使って、character_id と用途から Notion参照→英語のGeneration Instructionsと自然言語プロンプトを Nano Banana の正式フレーム `[Subject] + [Action] + [Location/context] + [Composition] + [Style]` で生成し、二重チェックを通したうえで画像生成前に確認を取ってください。確認後のみ `--confirm-image-generation` で画像生成まで進めてください。"
 
 policy:
   allow_implicit_invocation: true

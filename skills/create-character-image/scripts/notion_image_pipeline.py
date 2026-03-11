@@ -159,6 +159,36 @@ DEFAULT_TONE_BY_USE_CASE = {
 }
 
 REQ_KEYS = {"character_id", "use_case"}
+CORE_PROMPT_FRAMEWORK_SECTIONS = [
+    "Subject",
+    "Action",
+    "Location/context",
+    "Composition",
+    "Style",
+]
+SUPPORTING_DIRECTIVE_SECTIONS = [
+    "Edit Preservation",
+    "Text Rendering and Localization",
+    "Constraint Notes",
+]
+DOUBLE_CHECK_SEQUENCE = {
+    "prompt_assembly": [
+        "notion_query_flow",
+        "official_formula_sections",
+        "strong_generation_verb",
+        "creative_director_style",
+        "edit_preservation_clause",
+        "text_rendering_clause",
+        "negative_policy",
+        "english_only",
+    ],
+    "output_package": [
+        "file_naming",
+        "descriptive_alt_caption",
+        "confirmation_gating",
+        "double_check_metadata",
+    ],
+}
 
 
 @dataclass
@@ -325,6 +355,124 @@ def sentence_fragment(text: str, fallback: str) -> str:
     return cleaned.rstrip(".!?")
 
 
+def extract_quoted_texts(*texts: str) -> List[str]:
+    found: List[str] = []
+    for text in texts:
+        for match in re.findall(r'"([^"\n]+)"', text or ""):
+            cleaned = match.strip()
+            if cleaned and cleaned not in found:
+                found.append(cleaned)
+    return found
+
+
+def build_prompt_framework(
+    req: Dict[str, Any],
+    bundle: ProfileBundle,
+    tone_name: str,
+    preset: Dict[str, Any],
+    resolution: Dict[str, Any],
+    negative: Dict[str, Any],
+) -> Dict[str, str]:
+    c_props = bundle.character_page.get("properties", {})
+    f_props = bundle.face_page.get("properties", {})
+    b_props = bundle.body_page.get("properties", {})
+    o_props = bundle.outfit_page.get("properties", {})
+
+    age = number_to_str(c_props.get("age")) or "adult"
+    nationality = (
+        select_to_str(c_props.get("nationality"))
+        or rich_text_to_str(c_props.get("nationality"))
+        or "Japanese"
+    )
+    scene = sentence_fragment(
+        str(req.get("scene") or ""),
+        preset.get("scene_suggestion") or "a clean context-appropriate setting",
+    )
+    expression = sentence_fragment(
+        str(req.get("expression") or ""),
+        TONE_PRESETS[tone_name]["description"],
+    )
+    angle = str(req.get("angle") or "").strip() or "eye-level"
+    gaze = str(req.get("gaze") or "").strip() or "toward camera"
+    extra_constraints = str(req.get("extra_constraints") or "").strip()
+    garments = join_non_empty(multi_select_to_list(o_props.get("garments")))
+    colors = join_non_empty(multi_select_to_list(o_props.get("color_palette")))
+    accessories = join_non_empty(multi_select_to_list(o_props.get("accessories")))
+
+    quoted_texts = extract_quoted_texts(
+        str(req.get("scene") or ""),
+        str(req.get("expression") or ""),
+        extra_constraints,
+    )
+    if quoted_texts:
+        text_rendering = (
+            "Render the following text exactly as quoted: "
+            + ", ".join([f'"{item}"' for item in quoted_texts])
+            + ". Use a clean modern sans-serif treatment that matches the scene and do not rewrite the text."
+        )
+    else:
+        text_rendering = (
+            "Do not add accidental signage, logos, subtitles, watermarks, captions, "
+            "or any other visible text."
+        )
+
+    factual_parts = [
+        f"apparent age around {age}",
+        f"skin tone {extract_skin_tone(f_props.get('skin_tone')) or 'natural Japanese skin tone'}",
+        f"hairstyle {select_to_str(f_props.get('hair_style')) or 'natural hairstyle'}",
+        f"hair color {select_to_str(f_props.get('hair_color')) or 'natural hair color'}",
+        f"body type {select_to_str(b_props.get('body_type')) or 'balanced'}",
+        f"height {number_to_str(b_props.get('height_cm')) or 'unspecified'} cm",
+        f"modesty level {select_to_str(o_props.get('modesty_level')) or 'modest'}",
+    ]
+    if garments:
+        factual_parts.append(f"garments {garments}")
+    if colors:
+        factual_parts.append(f"palette {colors}")
+    if accessories:
+        factual_parts.append(f"accessories {accessories}")
+    if extra_constraints:
+        factual_parts.append(f"extra request {extra_constraints}")
+
+    framework = {
+        "Subject": (
+            f"{req['character_id']}, a {nationality} adult subject, with "
+            f"{rich_text_to_str(f_props.get('eyes')) or 'natural eyes'}, "
+            f"{select_to_str(f_props.get('hair_style')) or 'a natural hairstyle'}, "
+            f"{select_to_str(f_props.get('hair_color')) or 'a natural hair color'}, and "
+            f"{rich_text_to_str(f_props.get('bangs')) or 'natural bangs'}."
+        ),
+        "Action": f"Visible action and expression: {expression}.",
+        "Location/context": f"Environment and setting: {scene}.",
+        "Composition": (
+            f"{angle} framing at {preset['focal_length_eq']} with subject gaze {gaze}, "
+            f"subject occupancy {preset['subject_occupancy']}, composition rules "
+            f"{', '.join(preset['composition_rules'])}, and safe-area rule: {resolution['framing_notes']}"
+        ),
+        "Style": (
+            f"Photorealistic professional image for {req['use_case']} use. "
+            f"Lighting: {preset['photo_keywords']}, {preset['color_temp_K']}K, {preset['exposure_ev']} EV. "
+            f"Camera and lens: {preset['focal_length_eq']}, {preset['aperture']}, {preset['shutter_speed']}, {preset['ISO_range']} ISO. "
+            f"Color grading or film stock: {preset['palette']}. "
+            f"Materiality and texture: believable skin texture, realistic fabric behavior, natural surface detail. "
+            f"Tone: {TONE_PRESETS[tone_name]['description']}."
+        ),
+        "Edit Preservation": (
+            "Preserve the character identity, face structure, hairstyle, hair color, body proportions, "
+            "outfit family, modesty level, and overall realism from the Notion profile. Only change the "
+            "requested scene, expression, camera angle, gaze direction, and explicitly stated extra constraints."
+        ),
+        "Text Rendering and Localization": text_rendering,
+        "Constraint Notes": (
+            "; ".join(factual_parts)
+            + f"; target aspect ratio {resolution['target_aspect']}; actual generation size {resolution['generation_size_px']}; "
+            f"delivery format {resolution['delivery_format']}; colorspace {resolution['colorspace']}; "
+            f"negative constraints {build_negative_line(negative).rstrip('. ')}."
+        ),
+    }
+    return framework
+
+
 def validate_resolution_config(use_case: str) -> Dict[str, Any]:
     resolution = RESOLUTION_MAP[use_case]
     size_px = resolution["generation_size_px"]
@@ -480,23 +628,26 @@ def compose_generation_instructions(
 ) -> Tuple[str, Dict[str, Any]]:
     preset = choose_preset(req["use_case"])
     resolution = validate_resolution_config(req["use_case"])
-
     c_props = bundle.character_page.get("properties", {})
-    f_props = bundle.face_page.get("properties", {})
-    b_props = bundle.body_page.get("properties", {})
     o_props = bundle.outfit_page.get("properties", {})
 
-    age = number_to_str(c_props.get("age")) or "N/A"
-    nationality = select_to_str(c_props.get("nationality")) or rich_text_to_str(c_props.get("nationality")) or "Japanese"
-    scene = str(req.get("scene") or "").strip() or "N/A"
-    expression = str(req.get("expression") or "").strip() or "N/A"
-    angle = str(req.get("angle") or "").strip() or "N/A"
-    gaze = str(req.get("gaze") or "").strip() or "N/A"
-    extra_constraints = str(req.get("extra_constraints") or "").strip() or "N/A"
-
-    body_negative = rich_text_to_str(b_props.get("negative_constraints"))
+    body_negative = rich_text_to_str(bundle.body_page.get("properties", {}).get("negative_constraints"))
     outfit_negative = rich_text_to_str(o_props.get("negative_constraints"))
     negative = merge_negative_constraints(body_negative, outfit_negative)
+    framework = build_prompt_framework(
+        req=req,
+        bundle=bundle,
+        tone_name=tone_name,
+        preset=preset,
+        resolution=resolution,
+        negative=negative,
+    )
+    nationality = (
+        select_to_str(c_props.get("nationality"))
+        or rich_text_to_str(c_props.get("nationality"))
+        or "Japanese"
+    )
+    age = number_to_str(c_props.get("age")) or "N/A"
 
     md = f"""# Generation Instructions
 
@@ -506,71 +657,33 @@ def compose_generation_instructions(
 - **Age**: {age}
 - **Purpose**: {req["use_case"]}
 
-## Scene
-- **Situation**: {scene}
-- **Expression**: {expression}
-- **Angle**: {angle}
-- **Gaze**: {gaze}
-- **Other Constraints**: {extra_constraints}
-
 ## Tone
 - **Name**: {tone_name}
 - **Description**: {TONE_PRESETS[tone_name]["description"]}
 
-## Facial Description
-- **Bangs**: {rich_text_to_str(f_props.get("bangs")) or "N/A"}
-- **Eyebrows**: {rich_text_to_str(f_props.get("eyebrows")) or "N/A"}
-- **Eyes**: {rich_text_to_str(f_props.get("eyes")) or "N/A"}
-- **Nose**: {rich_text_to_str(f_props.get("nose")) or "N/A"}
-- **Mouth**: {rich_text_to_str(f_props.get("mouth")) or "N/A"}
-- **Jawline**: {select_to_str(f_props.get("jawline")) or "N/A"}
-- **Hairstyle**: {select_to_str(f_props.get("hair_style")) or "N/A"}
-- **Hair Color**: {select_to_str(f_props.get("hair_color")) or "N/A"}
-- **Skin Tone**: {extract_skin_tone(f_props.get("skin_tone")) or "N/A"}
-- **Golden Ratio**: {rich_text_to_str(f_props.get("golden_ratio")) or "N/A"}
+## Subject
+{framework["Subject"]}
 
-## Body Description
-- **Height**: {number_to_str(b_props.get("height_cm")) or "N/A"} cm
-- **Height Tolerance**: {number_to_str(b_props.get("height_tolerance")) or "N/A"} cm
-- **Body Type**: {select_to_str(b_props.get("body_type")) or "N/A"}
-- **Bust Size**: {select_to_str(b_props.get("bust_size")) or "N/A"}
-- **Proportions Notes**: {rich_text_to_str(b_props.get("proportions_notes")) or "N/A"}
-- **Default Age Range**: {select_to_str(b_props.get("default_age_range")) or "N/A"}
+## Action
+{framework["Action"]}
 
-## Clothing
-- **Style Theme**: {select_to_str(o_props.get("style_theme")) or "N/A"}
-- **Garments**: {", ".join(multi_select_to_list(o_props.get("garments"))) or "N/A"}
-- **Color Palette**: {", ".join(multi_select_to_list(o_props.get("color_palette"))) or "N/A"}
-- **Accessories**: {", ".join(multi_select_to_list(o_props.get("accessories"))) or "N/A"}
-- **Modesty Level**: {select_to_str(o_props.get("modesty_level")) or "N/A"}
+## Location/context
+{framework["Location/context"]}
 
-## Shooting Conditions
-- **Atmosphere**: {preset["photo_keywords"]}
-- **Camera**:
-  - **focal_length**: {preset["focal_length_eq"]}
-  - **aperture**: {preset["aperture"]}
-  - **shutter_speed**: {preset["shutter_speed"]}
-- **Lighting**:
-  - **color_temp**: {preset["color_temp_K"]}
-  - **exposure**: {preset["exposure_ev"]}
-  - **ISO**: {preset["ISO_range"]}
-- **Composition**:
-  - **rules**: {", ".join(preset["composition_rules"])}
-  - **subject_occupancy**: {preset["subject_occupancy"]}
-- **Color**:
-  - **palette**: {preset["palette"]}
-- **Output**:
-  - **target_aspect**: {resolution["target_aspect"]}
-  - **generation_size**: {resolution["generation_size_px"]}
-  - **format**: {resolution["delivery_format"]}
-  - **colorspace**: {resolution["colorspace"]}
-  - **framing_notes**: {resolution["framing_notes"]}
+## Composition
+{framework["Composition"]}
 
-## Prohibited Actions
-- **General forbidden words**: {", ".join(negative["forbidden_words"])}
-- **General style exclusions**: {", ".join(negative["style_exclusions"])}
-- **Body-specific constraints**: {negative["body_constraints"] or "N/A"}
-- **Outfit-specific constraints**: {negative["outfit_constraints"] or "N/A"}
+## Style
+{framework["Style"]}
+
+## Edit Preservation
+{framework["Edit Preservation"]}
+
+## Text Rendering and Localization
+{framework["Text Rendering and Localization"]}
+
+## Constraint Notes
+{framework["Constraint Notes"]}
 """
     extra = {
         "preset_id": preset["id"],
@@ -588,77 +701,93 @@ def build_natural_prompt(
     resolution: Dict[str, Any],
     negative: Dict[str, Any],
 ) -> str:
-    c_props = bundle.character_page.get("properties", {})
-    f_props = bundle.face_page.get("properties", {})
-    b_props = bundle.body_page.get("properties", {})
-    o_props = bundle.outfit_page.get("properties", {})
+    framework = build_prompt_framework(
+        req=req,
+        bundle=bundle,
+        tone_name=tone_name,
+        preset=preset,
+        resolution=resolution,
+        negative=negative,
+    )
+    prompt_lines = ["Generate an image with the following requirements:"]
+    for section in CORE_PROMPT_FRAMEWORK_SECTIONS:
+        prompt_lines.append(f"{section}: {framework[section]}")
+    for section in SUPPORTING_DIRECTIVE_SECTIONS:
+        prompt_lines.append(f"{section}: {framework[section]}")
+    return "\n".join(prompt_lines).strip() + "\n"
 
-    age = number_to_str(c_props.get("age")) or "adult"
-    nationality = (
-        select_to_str(c_props.get("nationality"))
-        or rich_text_to_str(c_props.get("nationality"))
-        or "Japanese"
-    )
-    garments = join_non_empty(multi_select_to_list(o_props.get("garments")))
-    colors = join_non_empty(multi_select_to_list(o_props.get("color_palette")))
-    accessories = join_non_empty(multi_select_to_list(o_props.get("accessories")))
-    scene = sentence_fragment(
-        str(req.get("scene") or ""),
-        "a clean, context-appropriate setting",
-    )
-    expression = sentence_fragment(
-        str(req.get("expression") or ""),
-        TONE_PRESETS[tone_name]["description"],
-    )
-    angle = str(req.get("angle") or "").strip() or "eye-level"
-    gaze = str(req.get("gaze") or "").strip() or "toward camera"
-    extra_constraints = str(req.get("extra_constraints") or "").strip()
-    tone_description = (
-        TONE_PRESETS[tone_name]["description"]
-        .lower()
-        .replace(" tone", "")
-        .replace(" expression", "")
-    )
 
-    prompt_parts = [
-        (
-            f"Create a photorealistic professional photograph of {req['character_id']}, "
-            f"a {nationality} adult subject whose apparent age is around {age}, for {req['use_case']} use."
-        ),
-        (
-            f"Facial features include {rich_text_to_str(f_props.get('bangs')) or 'natural bangs'}, "
-            f"{rich_text_to_str(f_props.get('eyes')) or 'natural eyes'}, "
-            f"{select_to_str(f_props.get('hair_style')) or 'a natural hairstyle'}, and "
-            f"{select_to_str(f_props.get('hair_color')) or 'a natural hair color'}."
-        ),
-        (
-            f"Body presentation should read as {select_to_str(b_props.get('body_type')) or 'balanced'} "
-            f"with proportions described as {rich_text_to_str(b_props.get('proportions_notes')) or 'natural and believable'}."
-        ),
-        (
-            f"Style the outfit as {select_to_str(o_props.get('style_theme')) or 'clean casual'}"
-            + (f", featuring {garments}" if garments else "")
-            + (f", in {colors}" if colors else "")
-            + (f", with {accessories}" if accessories else "")
-            + "."
-        ),
-        f"Set the scene as follows: {scene}.",
-        f"Her expression should convey {expression}.",
-        f"Frame the shot from {angle}, with the subject gazing {gaze}.",
-        (
-            f"Use {preset['photo_keywords']}, {preset['focal_length_eq']} framing, {preset['aperture']} aperture, "
-            f"{preset['shutter_speed']} shutter speed, {preset['ISO_range']} ISO, and {preset['palette']} color treatment."
-        ),
-        (
-            f"The overall tone should feel {tone_description}, "
-            f"and the composition must respect this delivery plan: {resolution['target_aspect']} output, "
-            f"{resolution['generation_size_px']} generation canvas, {resolution['framing_notes']}"
-        ),
-        f"Avoid the following elements: {build_negative_line(negative).rstrip('. ')}.",
+def validate_prompt_assembly(
+    generation_instructions: str,
+    natural_prompt: str,
+    negative: Dict[str, Any],
+) -> Dict[str, Any]:
+    required_sections = CORE_PROMPT_FRAMEWORK_SECTIONS + SUPPORTING_DIRECTIVE_SECTIONS
+    missing_md = [
+        section for section in required_sections
+        if f"## {section}" not in generation_instructions
     ]
-    if extra_constraints:
-        prompt_parts.append(f"Additional constraints: {extra_constraints}.")
-    return " ".join(prompt_parts).strip() + "\n"
+    if missing_md:
+        fail("Generation Instructions is missing required sections: " + ", ".join(missing_md))
+
+    missing_prompt = [
+        section for section in required_sections
+        if f"{section}:" not in natural_prompt
+    ]
+    if missing_prompt:
+        fail("Natural prompt is missing required sections: " + ", ".join(missing_prompt))
+
+    prompt_lines = natural_prompt.splitlines()
+    if not prompt_lines or not re.match(r"^(Generate|Create|Render)\b", prompt_lines[0]):
+        fail("Natural prompt must start with a strong image-generation verb")
+
+    style_line = next(
+        (line for line in prompt_lines if line.startswith("Style:")),
+        "",
+    )
+    for token in [
+        "Lighting:",
+        "Camera and lens:",
+        "Color grading or film stock:",
+        "Materiality and texture:",
+    ]:
+        if token not in style_line:
+            fail("Style must include official creative-director controls")
+
+    editing_scope_line = next(
+        (line for line in prompt_lines if line.startswith("Edit Preservation:")),
+        "",
+    )
+    if "Preserve the character identity" not in editing_scope_line or "Only change" not in editing_scope_line:
+        fail("Edit Preservation must explicitly lock identity traits and limit allowed changes")
+
+    text_rendering_line = next(
+        (line for line in prompt_lines if line.startswith("Text Rendering and Localization:")),
+        "",
+    )
+    if '"' not in text_rendering_line and "Do not add accidental signage" not in text_rendering_line:
+        fail("Text Rendering and Localization must either quote exact text or forbid accidental text")
+
+    negative_line = build_negative_line(negative).rstrip(". ")
+    constraint_line = next(
+        (line for line in prompt_lines if line.startswith("Constraint Notes:")),
+        "",
+    )
+    if negative_line and negative_line not in generation_instructions:
+        fail("Generation Instructions must include the merged negative constraints")
+    if negative_line and negative_line not in constraint_line:
+        fail("Constraint Notes must include the merged negative constraints")
+
+    validate_english_only_fields(
+        {
+            "Generation Instructions": generation_instructions,
+            "Natural prompt": natural_prompt,
+        }
+    )
+    return {
+        "status": "passed",
+        "checks": DOUBLE_CHECK_SEQUENCE["prompt_assembly"],
+    }
 
 
 def resolve_image_generation_mode(
@@ -736,6 +865,34 @@ def build_alt_caption(character_id: str, use_case: str, scene: str) -> Tuple[str
     return alt, caption
 
 
+def validate_descriptive_text(label: str, text: str) -> None:
+    cleaned = (text or "").strip()
+    if len(cleaned) < 12 or len(cleaned.split()) < 3:
+        fail(f"{label} must be descriptive")
+
+
+def validate_output_package(meta: Dict[str, Any]) -> Dict[str, Any]:
+    if not re.fullmatch(r"[^_]+_(X|Blog|LP|Print)_\d{8}-\d{6}\.png", meta.get("file_name") or ""):
+        fail("image file name format is invalid")
+    validate_descriptive_text("Alt text", str(meta.get("alt") or ""))
+    validate_descriptive_text("Caption", str(meta.get("caption") or ""))
+    validate_english_only_fields(
+        {
+            "Alt text": str(meta.get("alt") or ""),
+            "Caption": str(meta.get("caption") or ""),
+        }
+    )
+    if meta.get("image_status") == "awaiting_confirmation":
+        if meta.get("file_path") is not None or meta.get("image_provider") is not None:
+            fail("awaiting_confirmation must not include generated image artifacts")
+    if "double_check" not in meta:
+        fail("metadata must include double_check results")
+    return {
+        "status": "passed",
+        "checks": DOUBLE_CHECK_SEQUENCE["output_package"],
+    }
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Notion character image pipeline.")
     parser.add_argument("--request-json", required=True, help="Path to normalized request JSON")
@@ -786,6 +943,11 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     save_text(gi_path, generation_instructions)
     save_text(prompt_path, natural_prompt)
+    prompt_assembly_check = validate_prompt_assembly(
+        generation_instructions=generation_instructions,
+        natural_prompt=natural_prompt,
+        negative=extra["negative"],
+    )
 
     image_result: Dict[str, Any] = {}
     image_status = resolve_image_generation_mode(
@@ -803,14 +965,6 @@ def main(argv: Optional[List[str]] = None) -> None:
         )
 
     alt, caption = build_alt_caption(req["character_id"], req["use_case"], str(req.get("scene") or ""))
-    validate_english_only_fields(
-        {
-            "Generation Instructions": generation_instructions,
-            "Natural prompt": natural_prompt,
-            "Alt text": alt,
-            "Caption": caption,
-        }
-    )
 
     meta = {
         "character_id": req["character_id"],
@@ -828,9 +982,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         "caption": caption,
         "negative": extra["negative"],
         "warnings": [],
+        "double_check": {
+            "prompt_assembly": prompt_assembly_check,
+        },
         "image_provider": "openai-images-api" if image_status == "generated" else None,
         "image_provider_details": image_result,
     }
+    meta["double_check"]["output_package"] = validate_output_package(meta)
     save_text(meta_path, json.dumps(meta, ensure_ascii=False, indent=2) + "\n")
 
     print("```markdown")
