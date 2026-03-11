@@ -95,30 +95,36 @@ PHOTO_PRESETS: List[Dict[str, Any]] = [
     },
 ]
 
+SUPPORTED_IMAGE_SIZES = {"1024x1024", "1536x1024", "1024x1536"}
+
 RESOLUTION_MAP = {
     "X": {
-        "aspect": "1:1",
-        "size_px": "1024x1024",
-        "format": "png",
+        "target_aspect": "1:1",
+        "generation_size_px": "1024x1024",
+        "delivery_format": "png",
         "colorspace": "sRGB",
+        "framing_notes": "Keep the subject centered for square delivery.",
     },
     "Blog": {
-        "aspect": "16:9",
-        "size_px": "1024x576",
-        "format": "png",
+        "target_aspect": "16:9",
+        "generation_size_px": "1536x1024",
+        "delivery_format": "png",
         "colorspace": "sRGB",
+        "framing_notes": "Leave safe margins above and below the subject for a downstream 16:9 crop.",
     },
     "LP": {
-        "aspect": "4:3",
-        "size_px": "1200x900",
-        "format": "png",
+        "target_aspect": "4:3",
+        "generation_size_px": "1536x1024",
+        "delivery_format": "png",
         "colorspace": "sRGB",
+        "framing_notes": "Keep hands and key outfit details within a centered 4:3 safe area.",
     },
     "Print": {
-        "aspect": "A4",
-        "size_px": "2480x3508",
-        "format": "png",
+        "target_aspect": "A4",
+        "generation_size_px": "1024x1536",
+        "delivery_format": "png",
         "colorspace": "sRGB",
+        "framing_notes": "Compose vertically with extra headroom for an A4 portrait crop.",
     },
 }
 
@@ -269,11 +275,17 @@ def extract_skin_tone(prop: Optional[Dict[str, Any]]) -> str:
     return rich_text_to_str(prop)
 
 
-def maybe_english_warning(text: str) -> Optional[str]:
-    # Hiragana, Katakana, Kanji
-    if re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text):
-        return "Detected Japanese text in English-only output fields."
-    return None
+def contains_japanese(text: str) -> bool:
+    return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text))
+
+
+def validate_english_only_fields(fields: Dict[str, str]) -> None:
+    violations = [label for label, text in fields.items() if contains_japanese(text)]
+    if violations:
+        fail(
+            "The following fields must be English-only: "
+            + ", ".join(sorted(violations))
+        )
 
 
 def merge_negative_constraints(body_neg: str, outfit_neg: str) -> Dict[str, Any]:
@@ -300,6 +312,25 @@ def build_negative_line(negative: Dict[str, Any]) -> str:
     if outfit_c:
         parts.append("outfit constraints: " + outfit_c)
     return " | ".join(parts)
+
+
+def join_non_empty(parts: List[str], sep: str = ", ") -> str:
+    return sep.join([part for part in parts if part])
+
+
+def sentence_fragment(text: str, fallback: str) -> str:
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return fallback
+    return cleaned.rstrip(".!?")
+
+
+def validate_resolution_config(use_case: str) -> Dict[str, Any]:
+    resolution = RESOLUTION_MAP[use_case]
+    size_px = resolution["generation_size_px"]
+    if size_px not in SUPPORTED_IMAGE_SIZES:
+        fail(f"Unsupported OpenAI image size configured for {use_case}: {size_px}")
+    return resolution
 
 
 def choose_preset(use_case: str) -> Dict[str, Any]:
@@ -355,7 +386,6 @@ def query_related_profile(
     notion_api_key: str,
     database_id: str,
     char_page_id: str,
-    default_relation_ids: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     payload = {
         "filter": {
@@ -372,13 +402,6 @@ def query_related_profile(
     rows = result.get("results") or []
     if rows:
         return rows[0]
-
-    # fallback: read profile by default relation id if query returned no rows
-    rel_ids = default_relation_ids or []
-    if rel_ids:
-        fallback_id = rel_ids[0]
-        page_url = f"{NOTION_BASE_URL}/pages/{fallback_id}"
-        return http_json("GET", page_url, notion_headers(notion_api_key))
 
     fail(f"Related profile not found in database {database_id} for character page {char_page_id}")
     return {}
@@ -427,25 +450,20 @@ def fetch_profiles(
     char_page_id = character_page.get("id")
     if not char_page_id:
         fail("character page has no id")
-    char_props = character_page.get("properties", {})
-
     face_page = query_related_profile(
         notion_api_key,
         DATABASE_IDS["face_profiles"],
         char_page_id,
-        relation_ids(char_props.get("default_face")),
     )
     body_page = query_related_profile(
         notion_api_key,
         DATABASE_IDS["body_profiles"],
         char_page_id,
-        relation_ids(char_props.get("default_body")),
     )
     outfit_page = query_related_profile(
         notion_api_key,
         DATABASE_IDS["outfit_profiles"],
         char_page_id,
-        relation_ids(char_props.get("default_outfit")),
     )
     return ProfileBundle(
         character_page=character_page,
@@ -461,7 +479,7 @@ def compose_generation_instructions(
     tone_name: str,
 ) -> Tuple[str, Dict[str, Any]]:
     preset = choose_preset(req["use_case"])
-    resolution = RESOLUTION_MAP[req["use_case"]]
+    resolution = validate_resolution_config(req["use_case"])
 
     c_props = bundle.character_page.get("properties", {})
     f_props = bundle.face_page.get("properties", {})
@@ -542,10 +560,11 @@ def compose_generation_instructions(
 - **Color**:
   - **palette**: {preset["palette"]}
 - **Output**:
-  - **aspect**: {resolution["aspect"]}
-  - **size**: {resolution["size_px"]}
-  - **format**: {resolution["format"]}
+  - **target_aspect**: {resolution["target_aspect"]}
+  - **generation_size**: {resolution["generation_size_px"]}
+  - **format**: {resolution["delivery_format"]}
   - **colorspace**: {resolution["colorspace"]}
+  - **framing_notes**: {resolution["framing_notes"]}
 
 ## Prohibited Actions
 - **General forbidden words**: {", ".join(negative["forbidden_words"])}
@@ -561,8 +580,99 @@ def compose_generation_instructions(
     return md.strip() + "\n", extra
 
 
-def build_natural_prompt(generation_instructions: str, negative: Dict[str, Any]) -> str:
-    return f"{generation_instructions}\nNegative: {build_negative_line(negative)}\n"
+def build_natural_prompt(
+    req: Dict[str, Any],
+    bundle: ProfileBundle,
+    tone_name: str,
+    preset: Dict[str, Any],
+    resolution: Dict[str, Any],
+    negative: Dict[str, Any],
+) -> str:
+    c_props = bundle.character_page.get("properties", {})
+    f_props = bundle.face_page.get("properties", {})
+    b_props = bundle.body_page.get("properties", {})
+    o_props = bundle.outfit_page.get("properties", {})
+
+    age = number_to_str(c_props.get("age")) or "adult"
+    nationality = (
+        select_to_str(c_props.get("nationality"))
+        or rich_text_to_str(c_props.get("nationality"))
+        or "Japanese"
+    )
+    garments = join_non_empty(multi_select_to_list(o_props.get("garments")))
+    colors = join_non_empty(multi_select_to_list(o_props.get("color_palette")))
+    accessories = join_non_empty(multi_select_to_list(o_props.get("accessories")))
+    scene = sentence_fragment(
+        str(req.get("scene") or ""),
+        "a clean, context-appropriate setting",
+    )
+    expression = sentence_fragment(
+        str(req.get("expression") or ""),
+        TONE_PRESETS[tone_name]["description"],
+    )
+    angle = str(req.get("angle") or "").strip() or "eye-level"
+    gaze = str(req.get("gaze") or "").strip() or "toward camera"
+    extra_constraints = str(req.get("extra_constraints") or "").strip()
+    tone_description = (
+        TONE_PRESETS[tone_name]["description"]
+        .lower()
+        .replace(" tone", "")
+        .replace(" expression", "")
+    )
+
+    prompt_parts = [
+        (
+            f"Create a photorealistic professional photograph of {req['character_id']}, "
+            f"a {nationality} adult subject whose apparent age is around {age}, for {req['use_case']} use."
+        ),
+        (
+            f"Facial features include {rich_text_to_str(f_props.get('bangs')) or 'natural bangs'}, "
+            f"{rich_text_to_str(f_props.get('eyes')) or 'natural eyes'}, "
+            f"{select_to_str(f_props.get('hair_style')) or 'a natural hairstyle'}, and "
+            f"{select_to_str(f_props.get('hair_color')) or 'a natural hair color'}."
+        ),
+        (
+            f"Body presentation should read as {select_to_str(b_props.get('body_type')) or 'balanced'} "
+            f"with proportions described as {rich_text_to_str(b_props.get('proportions_notes')) or 'natural and believable'}."
+        ),
+        (
+            f"Style the outfit as {select_to_str(o_props.get('style_theme')) or 'clean casual'}"
+            + (f", featuring {garments}" if garments else "")
+            + (f", in {colors}" if colors else "")
+            + (f", with {accessories}" if accessories else "")
+            + "."
+        ),
+        f"Set the scene as follows: {scene}.",
+        f"Her expression should convey {expression}.",
+        f"Frame the shot from {angle}, with the subject gazing {gaze}.",
+        (
+            f"Use {preset['photo_keywords']}, {preset['focal_length_eq']} framing, {preset['aperture']} aperture, "
+            f"{preset['shutter_speed']} shutter speed, {preset['ISO_range']} ISO, and {preset['palette']} color treatment."
+        ),
+        (
+            f"The overall tone should feel {tone_description}, "
+            f"and the composition must respect this delivery plan: {resolution['target_aspect']} output, "
+            f"{resolution['generation_size_px']} generation canvas, {resolution['framing_notes']}"
+        ),
+        f"Avoid the following elements: {build_negative_line(negative).rstrip('. ')}.",
+    ]
+    if extra_constraints:
+        prompt_parts.append(f"Additional constraints: {extra_constraints}.")
+    return " ".join(prompt_parts).strip() + "\n"
+
+
+def resolve_image_generation_mode(
+    skip_image: bool,
+    confirm_image_generation: bool,
+    openai_api_key: Optional[str],
+) -> str:
+    if skip_image:
+        return "skipped"
+    if not confirm_image_generation:
+        return "awaiting_confirmation"
+    if not openai_api_key:
+        fail("OPENAI_API_KEY is required when image generation is confirmed")
+    return "generated"
 
 
 def openai_headers(openai_api_key: str) -> Dict[str, str]:
@@ -626,19 +736,25 @@ def build_alt_caption(character_id: str, use_case: str, scene: str) -> Tuple[str
     return alt, caption
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run Notion character image pipeline.")
     parser.add_argument("--request-json", required=True, help="Path to normalized request JSON")
     parser.add_argument("--output-dir", required=True, help="Directory for outputs")
     parser.add_argument("--mock-data", help="Path to local mock profile bundle JSON")
-    parser.add_argument("--skip-image", action="store_true", help="Skip image generation")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--skip-image", action="store_true", help="Skip image generation")
+    mode_group.add_argument(
+        "--confirm-image-generation",
+        action="store_true",
+        help="Explicitly confirm that image generation should be executed.",
+    )
     parser.add_argument("--tone", choices=["neutral", "soft", "energetic"], help="Override tone preset")
     parser.add_argument("--image-model", default="gpt-image-1", help="OpenAI image model")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: Optional[List[str]] = None) -> None:
+    args = parse_args(argv)
 
     req = load_request_json(Path(args.request_json))
     out_dir = Path(args.output_dir)
@@ -651,11 +767,14 @@ def main() -> None:
     bundle = fetch_profiles(notion_api_key, req, mock_path)
     tone_name = args.tone or DEFAULT_TONE_BY_USE_CASE[req["use_case"]]
     generation_instructions, extra = compose_generation_instructions(req, bundle, tone_name)
-    natural_prompt = build_natural_prompt(generation_instructions, extra["negative"])
-
-    warning_1 = maybe_english_warning(generation_instructions)
-    warning_2 = maybe_english_warning(natural_prompt)
-    warnings = [w for w in [warning_1, warning_2] if w]
+    natural_prompt = build_natural_prompt(
+        req=req,
+        bundle=bundle,
+        tone_name=tone_name,
+        preset=choose_preset(req["use_case"]),
+        resolution=extra["resolution"],
+        negative=extra["negative"],
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     file_name = f'{req["character_id"]}_{req["use_case"]}_{timestamp}.png'
@@ -669,21 +788,29 @@ def main() -> None:
     save_text(prompt_path, natural_prompt)
 
     image_result: Dict[str, Any] = {}
-    if args.skip_image:
-        image_status = "skipped"
-    else:
-        if not openai_api_key:
-            fail("OPENAI_API_KEY is required when --skip-image is not set")
+    image_status = resolve_image_generation_mode(
+        skip_image=args.skip_image,
+        confirm_image_generation=args.confirm_image_generation,
+        openai_api_key=openai_api_key,
+    )
+    if image_status == "generated":
         image_result = generate_image(
             openai_api_key=openai_api_key,
             model=args.image_model,
             prompt=natural_prompt,
-            size_px=extra["resolution"]["size_px"],
+            size_px=extra["resolution"]["generation_size_px"],
             output_path=image_path,
         )
-        image_status = "generated"
 
     alt, caption = build_alt_caption(req["character_id"], req["use_case"], str(req.get("scene") or ""))
+    validate_english_only_fields(
+        {
+            "Generation Instructions": generation_instructions,
+            "Natural prompt": natural_prompt,
+            "Alt text": alt,
+            "Caption": caption,
+        }
+    )
 
     meta = {
         "character_id": req["character_id"],
@@ -700,7 +827,7 @@ def main() -> None:
         "alt": alt,
         "caption": caption,
         "negative": extra["negative"],
-        "warnings": warnings,
+        "warnings": [],
         "image_provider": "openai-images-api" if image_status == "generated" else None,
         "image_provider_details": image_result,
     }

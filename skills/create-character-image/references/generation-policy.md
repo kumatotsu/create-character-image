@@ -5,8 +5,11 @@
 Always output in this order:
 1. Structured markdown `Generation Instructions` (English)
 2. Natural language prompt (English plain text)
-3. Image generation execution (only after user confirmation)
-4. Image metadata (JSON)
+3. User confirmation for image generation
+4. Image generation execution
+5. Image metadata (JSON)
+
+If confirmation has not been given yet, emit the prompt artifacts, return `image_status: "awaiting_confirmation"` in metadata, and do not call the image API.
 
 ## Input Normalization Schema
 
@@ -84,26 +87,32 @@ Always output in this order:
 
 ```yaml
 X:
-  aspect: "1:1"
-  size_px: "1024x1024"
-  format: "png"
+  target_aspect: "1:1"
+  generation_size_px: "1024x1024"
+  delivery_format: "png"
   colorspace: "sRGB"
+  framing_notes: "Keep the subject centered for square delivery."
 Blog:
-  aspect: "16:9"
-  size_px: "1024x576"
-  format: "png"
+  target_aspect: "16:9"
+  generation_size_px: "1536x1024"
+  delivery_format: "png"
   colorspace: "sRGB"
+  framing_notes: "Leave safe margins above and below the subject for a downstream 16:9 crop."
 LP:
-  aspect: "4:3"
-  size_px: "1200x900"
-  format: "png"
+  target_aspect: "4:3"
+  generation_size_px: "1536x1024"
+  delivery_format: "png"
   colorspace: "sRGB"
+  framing_notes: "Keep hands and key outfit details within a centered 4:3 safe area."
 Print:
-  aspect: "A4"
-  size_px: "2480x3508"
-  format: "png"
+  target_aspect: "A4"
+  generation_size_px: "1024x1536"
+  delivery_format: "png"
   colorspace: "sRGB"
+  framing_notes: "Compose vertically with extra headroom for an A4 portrait crop."
 ```
+
+Use only OpenAI-supported generation sizes for `gpt-image-1`: `1024x1024`, `1536x1024`, `1024x1536`.
 
 ## Negative Policy and Tone
 
@@ -127,7 +136,7 @@ tone_presets:
 3. Ensure Face/Body/Outfit are all reflected in outputs.
 4. Ensure negative policy integration is complete.
 5. Ensure tone selection is suitable.
-6. Ensure use-case resolution map is correct.
+6. Ensure use-case resolution map uses OpenAI-supported generation sizes.
 7. Ensure image file name format is `<character_id>_<use_case>_<YYYYMMDD-HHmmss>.png`.
 8. Ensure Alt/Caption are descriptive.
-9. Ensure output text is fully in English.
+9. Ensure Generation Instructions, natural prompt, alt text, and caption are fully in English and fail fast if Japanese text is detected.
